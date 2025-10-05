@@ -532,6 +532,9 @@ bool setting_auto_dump = false;
 bool setting_live_reload = false;
 uint32_t setting_nav_item = 0;
 
+// When non-negative, indicates a pending request to focus a specific snapshot (draw) index
+std::atomic_int snapshot_focus_pending_index = -1;
+
 struct SettingSelection {
   uint32_t shader_hash = 0;
   uint64_t resource_handle = 0;
@@ -1593,6 +1596,14 @@ void RenderCapturePane(reshade::api::device* device, DeviceData* data) {
 
       if (ImGui::TableSetColumnIndex(CAPTURE_PANE_COLUMN_REF)) {
         ImGui::Text("%03d", draw_index);
+
+        // If a pending focus request targets this draw index, set focus/scroll here
+        const int pending = snapshot_focus_pending_index.load();
+        if (pending >= 0 && pending == draw_index) {
+          ImGui::SetItemDefaultFocus();
+          ImGui::SetScrollHereY();
+          snapshot_focus_pending_index = -1;
+        }
       }
 
       for (const auto& [slot_space, buffer_range] : draw_details.constants) {
@@ -3158,6 +3169,20 @@ void RenderShaderView(reshade::api::device* device, DeviceData* data, SettingSel
     ImGui::EndTabItem();
   }
 }
+
+// Request a jump to the Snapshot pane and focus the given snapshot index
+inline void RequestSnapshotJump(int snapshot_index) {
+  setting_nav_item = 0; // Snapshot is the first nav item
+  snapshot_focus_pending_index = snapshot_index;
+}
+
+// Creates an item in the history list for the given label and snapshot index
+inline void CreateHistoryItem(const std::string& label, int current_snapshot_index) {
+  if (ImGui::Selectable(label.c_str())) {
+    RequestSnapshotJump(current_snapshot_index);
+  }
+}
+
 void RenderResourceViewHistory(reshade::api::device* device, DeviceData* data, reshade::api::resource resource) {
   auto current_snapshot_index = 0;
   for (auto& draw_details : data->draw_details_list) {
@@ -3173,9 +3198,11 @@ void RenderResourceViewHistory(reshade::api::device* device, DeviceData* data, r
         }
       }
       if (space == 0) {
-        ImGui::Text("Snapshot %03d: T%d", current_snapshot_index, slot);
+        std::string label = std::format("Snapshot {:03d}: T{}", current_snapshot_index, slot);
+        CreateHistoryItem(label, current_snapshot_index);
       } else {
-        ImGui::Text("Snapshot %03d: T%d,space%d", current_snapshot_index, slot, space);
+        std::string label = std::format("Snapshot {:03d}: T{},space{}", current_snapshot_index, slot, space);
+        CreateHistoryItem(label, current_snapshot_index);
       }
     }
     for (const auto& [slot_space, resource_view_details] : draw_details.uav_binds) {
@@ -3190,21 +3217,27 @@ void RenderResourceViewHistory(reshade::api::device* device, DeviceData* data, r
         }
       }
       if (space == 0) {
-        ImGui::Text("Snapshot %03d: U%d", current_snapshot_index, slot);
+        std::string label = std::format("Snapshot {:03d}: U{}", current_snapshot_index, slot);
+        CreateHistoryItem(label, current_snapshot_index);
       } else {
-        ImGui::Text("Snapshot %03d: U%d,space%d", current_snapshot_index, slot, space);
+        std::string label = std::format("Snapshot {:03d}: U{},space{}", current_snapshot_index, slot, space);
+        CreateHistoryItem(label, current_snapshot_index);
       }
     }
     for (const auto& [slot, resource_view_details] : draw_details.render_targets) {
       if (resource_view_details.resource.handle != resource.handle) continue;
-      ImGui::Text("Snapshot %03d: RTV%d", current_snapshot_index,
-                  slot);
+      {
+        std::string label = std::format("Snapshot {:03d}: RTV{}", current_snapshot_index, slot);
+        CreateHistoryItem(label, current_snapshot_index);
+      }
     }
     if (draw_details.copy_source == resource.handle) {
-      ImGui::Text("Snapshot %03d: Copy Source", current_snapshot_index);
+      std::string label = std::format("Snapshot {:03d}: Copy Source", current_snapshot_index);
+        CreateHistoryItem(label, current_snapshot_index);
     }
     if (draw_details.copy_destination == resource.handle) {
-      ImGui::Text("Snapshot %03d: Copy Destination", current_snapshot_index);
+      std::string label = std::format("Snapshot {:03d}: Copy Destination", current_snapshot_index);
+        CreateHistoryItem(label, current_snapshot_index);
     }
 
     current_snapshot_index++;
